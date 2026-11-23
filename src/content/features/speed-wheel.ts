@@ -65,7 +65,7 @@ function getVideoForTarget(target: HTMLElement): HTMLVideoElement | null {
   const player = target.closest<HTMLElement>(
     '.bpx-player-container, #bilibiliPlayer, .bilibili-player',
   )
-  return (player && findVideos(player)[0]) || findVideos()[0] || null
+  return (player && findVideos(player)[ 0 ]) || findVideos()[ 0 ] || null
 }
 
 function ensureOverlay(container: HTMLElement): ShadowRoot {
@@ -124,13 +124,13 @@ function updateNativeLabel(speed: number): void {
 }
 
 async function saveSpeed(speed: number): Promise<void> {
-  await chrome.storage.sync.set({ [LAST_SPEED_KEY]: normalizeSpeed(speed) })
+  await chrome.storage.sync.set({ [ LAST_SPEED_KEY ]: normalizeSpeed(speed) })
 }
 
 async function applyRememberedSpeed(video: HTMLVideoElement): Promise<void> {
   if (!config.remember) return
   const stored = await chrome.storage.sync.get(LAST_SPEED_KEY)
-  const speed = stored[LAST_SPEED_KEY]
+  const speed = stored[ LAST_SPEED_KEY ]
   if (typeof speed !== 'number' || !Number.isFinite(speed)) return
   const normalized = normalizeSpeed(speed)
   if (Math.abs(video.playbackRate - normalized) > 0.001) {
@@ -157,7 +157,7 @@ function createOnWheel(target: HTMLElement): (event: WheelEvent) => void {
 
     const direction = event.deltaY > 0 ? -1 : 1
     const current = video.playbackRate || 1
-    const step = current > 2 ? 0.3 : 0.1
+    const step = current > 2 ? 0.3 : 0.05
     const next = normalizeSpeed(current + direction * step)
     if (next === current) return
 
@@ -215,7 +215,7 @@ function rescan(): void {
 }
 
 function handleStorageChanged(
-  changes: { [key: string]: chrome.storage.StorageChange },
+  changes: { [ key: string ]: chrome.storage.StorageChange },
   areaName: string,
 ): void {
   if (areaName !== 'sync' || !changes.settings) return
