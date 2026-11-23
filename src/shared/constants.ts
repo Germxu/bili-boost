@@ -1,0 +1,36 @@
+import type { FeatureId, Settings } from './types'
+
+export const FEATURE_META: Record<FeatureId, { name: string; description: string }> = {
+  commentIp: {
+    name: '评论区 IP属地显示',
+    description: '在视频评论区显示发布者的 IP 属地信息',
+  },
+  navCustomizer: {
+    name: '顶部导航自定义',
+    description: '自定义 B站 顶部左侧导航项',
+  },
+  speedWheel: {
+    name: '滚轮倍速播放',
+    description: '通过鼠标滚轮自定义视频播放速度',
+  },
+  frameCapture: {
+    name: '视频帧读取',
+    description: '读取当前视频帧并保存为图片',
+  },
+  immersiveProgress: {
+    name: '沉浸式进度条',
+    description: '全屏播放时显示当前播放进度',
+  },
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  features: {
+    commentIp: true,
+    navCustomizer: false,
+    speedWheel: false,
+    frameCapture: false,
+    immersiveProgress: false,
+  },
+}
+
+export const LOG_PREFIX = '[BiliBoost]'

@@ -1,0 +1,20 @@
+{
+  "name": "bili-boost",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "B站功能优化 Chrome 扩展",
+  "scripts": {
+    "build:main": "tsc -p src/main-world/tsconfig.json",
+    "dev": "npm run build:main && vite",
+    "build": "npm run build:main && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc -p src/main-world/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^3.0.0",
+    "@types/chrome": "^0.3.7",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.8"
+  }
+}
