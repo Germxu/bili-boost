@@ -67,14 +67,16 @@
       return
     }
 
+    const text = `IP：${location}`
+
     if (badge) {
-      if (badge.textContent !== location) badge.textContent = location
+      if (badge.textContent !== text) badge.textContent = text
       return
     }
 
     badge = document.createElement('div')
     badge.id = BADGE_ID
-    badge.textContent = location
+    badge.textContent = text
     badge.style.cssText = 'margin-top:2px;color:#9499a0;font-size:12px;line-height:1.4;'
     pubdate.insertAdjacentElement('afterend', badge)
   }
