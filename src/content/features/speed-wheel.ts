@@ -12,6 +12,7 @@ const SPEED_TARGET_SELECTOR = [
 ].join(', ')
 const SPEED_LABEL_SELECTOR = '.bpx-player-ctrl-playbackrate-result'
 const COOLDOWN_MS = 50
+const SAVE_DEBOUNCE_MS = 300
 
 interface BoundVideo {
   video: HTMLVideoElement
@@ -30,6 +31,8 @@ const boundVideos: BoundVideo[] = []
 const boundTargets: BoundTarget[] = []
 let overlayHost: HTMLElement | null = null
 let hideTimer: number | undefined
+let saveTimer: number | undefined
+let pendingSpeed: number | null = null
 let lastWheelAt = 0
 
 function normalizeSpeed(value: number): number {
@@ -123,8 +126,25 @@ function updateNativeLabel(speed: number): void {
   })
 }
 
-async function saveSpeed(speed: number): Promise<void> {
-  await chrome.storage.sync.set({ [ LAST_SPEED_KEY ]: normalizeSpeed(speed) })
+let lastSavedSpeed: number | null = null
+
+async function flushSave(): Promise<void> {
+  if (pendingSpeed === null) return
+  const speed = pendingSpeed
+  pendingSpeed = null
+  if (speed === lastSavedSpeed) return
+  try {
+    await chrome.storage.sync.set({ [ LAST_SPEED_KEY ]: speed })
+    lastSavedSpeed = speed
+  } catch (error) {
+    logger.warn('speed-wheel: failed to save speed', error)
+  }
+}
+
+function scheduleSave(speed: number): void {
+  pendingSpeed = normalizeSpeed(speed)
+  window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => void flushSave(), SAVE_DEBOUNCE_MS)
 }
 
 async function applyRememberedSpeed(video: HTMLVideoElement): Promise<void> {
@@ -133,6 +153,7 @@ async function applyRememberedSpeed(video: HTMLVideoElement): Promise<void> {
   const speed = stored[ LAST_SPEED_KEY ]
   if (typeof speed !== 'number' || !Number.isFinite(speed)) return
   const normalized = normalizeSpeed(speed)
+  lastSavedSpeed = normalized
   if (Math.abs(video.playbackRate - normalized) > 0.001) {
     video.playbackRate = normalized
     updateNativeLabel(normalized)
@@ -164,7 +185,7 @@ function createOnWheel(target: HTMLElement): (event: WheelEvent) => void {
     video.playbackRate = next
     updateNativeLabel(next)
     showSpeed(next, getPlayerContainer(video))
-    if (config.remember) void saveSpeed(next)
+    if (config.remember) scheduleSave(next)
   }
 }
 
@@ -179,7 +200,7 @@ function createOnContextMenu(target: HTMLElement): (event: MouseEvent) => void {
     video.playbackRate = 1
     updateNativeLabel(1)
     showSpeed(1, getPlayerContainer(video))
-    if (config.remember) void saveSpeed(1)
+    if (config.remember) scheduleSave(1)
     logger.info('speed-wheel: reset to 1x via context menu')
   }
 }
@@ -190,7 +211,7 @@ function bindVideos(): void {
     const onRateChange = () => {
       const speed = normalizeSpeed(video.playbackRate)
       updateNativeLabel(speed)
-      if (config.remember) void saveSpeed(speed)
+      if (config.remember) scheduleSave(speed)
     }
     video.addEventListener('ratechange', onRateChange)
     boundVideos.push({ video, onRateChange })
@@ -237,6 +258,8 @@ function unbindAll(): void {
   overlayHost?.remove()
   overlayHost = null
   window.clearTimeout(hideTimer)
+  window.clearTimeout(saveTimer)
+  void flushSave()
 }
 
 export const speedWheelFeature: Feature = {
