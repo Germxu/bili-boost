@@ -11,7 +11,7 @@ export const FEATURE_META: Record<FeatureId, { name: string; description: string
   },
   speedWheel: {
     name: '滚轮倍速播放',
-    description: '通过鼠标滚轮自定义视频播放速度（0.25x–5x）',
+    description: '悬停倍速按钮滚轮调速（0.25x–5x），右键恢复 1x',
   },
   frameCapture: {
     name: '视频帧读取',
@@ -34,7 +34,6 @@ export const DEFAULT_SETTINGS: Settings = {
     immersiveProgress: false,
   },
   speedWheel: {
-    step: 0.1,
     remember: true,
   },
 }

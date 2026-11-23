@@ -157,7 +157,8 @@ function createOnWheel(target: HTMLElement): (event: WheelEvent) => void {
 
     const direction = event.deltaY > 0 ? -1 : 1
     const current = video.playbackRate || 1
-    const next = normalizeSpeed(current + direction * config.step)
+    const step = current > 2 ? 0.3 : 0.1
+    const next = normalizeSpeed(current + direction * step)
     if (next === current) return
 
     video.playbackRate = next
