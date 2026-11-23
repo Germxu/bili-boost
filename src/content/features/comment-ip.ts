@@ -1,4 +1,5 @@
 import { logger } from '../../shared/logger'
+import { isContextInvalidatedError, isExtensionContextValid } from '../../shared/runtime'
 import type { Feature, Settings } from '../../shared/types'
 
 const FLAG_KEY = 'biliBoost_ipEnabled'
@@ -9,7 +10,9 @@ function setFlag(enabled: boolean): void {
 }
 
 function requestMainWorldInjection(): void {
+  if (!isExtensionContextValid()) return
   void chrome.runtime.sendMessage({ type: INJECT_MESSAGE }).catch((error: unknown) => {
+    if (isContextInvalidatedError(error)) return
     logger.warn('main-world injection request failed', error)
   })
 }

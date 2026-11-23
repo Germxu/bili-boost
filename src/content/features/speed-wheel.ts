@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, SPEED_RANGE } from '../../shared/constants'
 import { logger } from '../../shared/logger'
+import { isContextInvalidatedError, isExtensionContextValid } from '../../shared/runtime'
 import { getSettings } from '../../shared/storage'
 import type { Feature, Settings, SpeedWheelSettings } from '../../shared/types'
 
@@ -129,7 +130,7 @@ function updateNativeLabel(speed: number): void {
 let lastSavedSpeed: number | null = null
 
 async function flushSave(): Promise<void> {
-  if (pendingSpeed === null) return
+  if (pendingSpeed === null || !isExtensionContextValid()) return
   const speed = pendingSpeed
   pendingSpeed = null
   if (speed === lastSavedSpeed) return
@@ -137,26 +138,33 @@ async function flushSave(): Promise<void> {
     await chrome.storage.sync.set({ [ LAST_SPEED_KEY ]: speed })
     lastSavedSpeed = speed
   } catch (error) {
+    if (isContextInvalidatedError(error)) return
     logger.warn('speed-wheel: failed to save speed', error)
   }
 }
 
 function scheduleSave(speed: number): void {
+  if (!isExtensionContextValid()) return
   pendingSpeed = normalizeSpeed(speed)
   window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => void flushSave(), SAVE_DEBOUNCE_MS)
 }
 
 async function applyRememberedSpeed(video: HTMLVideoElement): Promise<void> {
-  if (!config.remember) return
-  const stored = await chrome.storage.sync.get(LAST_SPEED_KEY)
-  const speed = stored[ LAST_SPEED_KEY ]
-  if (typeof speed !== 'number' || !Number.isFinite(speed)) return
-  const normalized = normalizeSpeed(speed)
-  lastSavedSpeed = normalized
-  if (Math.abs(video.playbackRate - normalized) > 0.001) {
-    video.playbackRate = normalized
-    updateNativeLabel(normalized)
+  if (!config.remember || !isExtensionContextValid()) return
+  try {
+    const stored = await chrome.storage.sync.get(LAST_SPEED_KEY)
+    const speed = stored[ LAST_SPEED_KEY ]
+    if (typeof speed !== 'number' || !Number.isFinite(speed)) return
+    const normalized = normalizeSpeed(speed)
+    lastSavedSpeed = normalized
+    if (Math.abs(video.playbackRate - normalized) > 0.001) {
+      video.playbackRate = normalized
+      updateNativeLabel(normalized)
+    }
+  } catch (error) {
+    if (isContextInvalidatedError(error)) return
+    logger.warn('speed-wheel: failed to restore speed', error)
   }
 }
 
