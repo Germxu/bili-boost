@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bili Boost</title>
-    <script type="module" crossorigin src="/assets/index.html-CCtHVHo8.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/constants-ZjpsPqtN.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-DUueb46I.css">
+    <script type="module" crossorigin src="/assets/index.html-BlY_EkAi.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/constants-O-p45bea.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-CYNRrjUm.css">
   </head>
   <body>
     <div class="app">
@@ -18,6 +18,22 @@
         </div>
       </header>
       <main id="feature-list" class="list"></main>
+      <section class="settings-section">
+        <h2>滚轮倍速设置</h2>
+        <label class="setting-row">
+          <span>每次步进</span>
+          <select id="speed-step">
+            <option value="0.05">0.05x</option>
+            <option value="0.1">0.1x</option>
+            <option value="0.2">0.2x</option>
+          </select>
+        </label>
+        <label class="setting-row">
+          <span>记住倍速</span>
+          <input id="speed-remember" type="checkbox" />
+        </label>
+        <p class="hint">鼠标悬停在播放器「倍速」按钮上滚动调速（0.25x–5x），右键恢复 1x，均不会影响音量滚轮。</p>
+      </section>
       <footer id="status" class="status"></footer>
     </div>
   </body>

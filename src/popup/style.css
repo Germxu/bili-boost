@@ -97,3 +97,40 @@ input[type="checkbox"] {
   color: #00aeec;
   text-align: right;
 }
+
+.settings-section {
+  border-top: 1px solid #e3e5e7;
+  padding-top: 10px;
+}
+
+.settings-section h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+.setting-row select {
+  width: 120px;
+  padding: 4px 6px;
+  border: 1px solid #e3e5e7;
+  border-radius: 6px;
+  background: #fff;
+  color: #18191c;
+  font-size: 12px;
+}
+
+.hint {
+  margin: 6px 6px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9499a0;
+}

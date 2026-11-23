@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from './constants'
-import type { FeatureId, Settings } from './types'
+import type { FeatureId, Settings, SpeedWheelSettings } from './types'
 
 const KEY = 'settings'
 
@@ -8,11 +8,18 @@ export async function getSettings(): Promise<Settings> {
   const value = stored[KEY] as Partial<Settings> | undefined
   return {
     features: { ...DEFAULT_SETTINGS.features, ...value?.features },
+    speedWheel: { ...DEFAULT_SETTINGS.speedWheel, ...value?.speedWheel },
   }
 }
 
 export async function setFeatureEnabled(id: FeatureId, enabled: boolean): Promise<void> {
   const settings = await getSettings()
   settings.features[id] = enabled
+  await chrome.storage.sync.set({ [KEY]: settings })
+}
+
+export async function setSpeedWheelSettings(patch: Partial<SpeedWheelSettings>): Promise<void> {
+  const settings = await getSettings()
+  settings.speedWheel = { ...settings.speedWheel, ...patch }
   await chrome.storage.sync.set({ [KEY]: settings })
 }
