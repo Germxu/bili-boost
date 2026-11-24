@@ -3,16 +3,18 @@ import { logger } from '../../shared/logger'
 import { getSettings } from '../../shared/storage'
 import type { Feature, Settings, SpeedWheelSettings } from '../../shared/types'
 
-const LAST_SPEED_KEY = 'biliBoost_lastPlaybackRate'
+const SPEED_KEY = 'biliBoost_lastPlaybackRate'
 const OVERLAY_HOST_ID = 'bili-boost-speed-host'
 const SPEED_TARGET_SELECTOR = [
   "div[aria-label='倍速']",
   '.bpx-player-ctrl-playbackrate',
   '.bpx-player-ctrl-playbackrate-menu',
 ].join(', ')
+const NATIVE_MENU_SELECTOR = '.bpx-player-ctrl-playbackrate-menu'
 const SPEED_LABEL_SELECTOR = '.bpx-player-ctrl-playbackrate-result'
 const COOLDOWN_MS = 50
 const SAVE_DEBOUNCE_MS = 300
+const NATIVE_CLICK_WINDOW_MS = 2000
 
 interface BoundVideo {
   video: HTMLVideoElement
@@ -29,11 +31,15 @@ let config: SpeedWheelSettings = { ...DEFAULT_SETTINGS.speedWheel }
 let observer: MutationObserver | null = null
 const boundVideos: BoundVideo[] = []
 const boundTargets: BoundTarget[] = []
+const boundMenus = new WeakSet<HTMLElement>()
 let overlayHost: HTMLElement | null = null
 let hideTimer: number | undefined
 let saveTimer: number | undefined
 let pendingSpeed: number | null = null
+let lastSyncedSpeed: number | null = null
 let lastWheelAt = 0
+let lastNativeClickAt = 0
+let nativeClickPending = false
 
 function normalizeSpeed(value: number): number {
   const clamped = Math.min(SPEED_RANGE.max, Math.max(SPEED_RANGE.min, value))
@@ -126,37 +132,83 @@ function updateNativeLabel(speed: number): void {
   })
 }
 
-let lastSavedSpeed: number | null = null
-
-async function flushSave(): Promise<void> {
-  if (pendingSpeed === null) return
-  const speed = pendingSpeed
-  pendingSpeed = null
-  if (speed === lastSavedSpeed) return
+/** 主存储：本机 localStorage，读写都不依赖云同步。 */
+function loadLocalSpeed(): number | null {
   try {
-    await chrome.storage.sync.set({ [ LAST_SPEED_KEY ]: speed })
-    lastSavedSpeed = speed
+    const raw = window.localStorage.getItem(SPEED_KEY)
+    if (raw === null) return null
+    const value = Number(raw)
+    return Number.isFinite(value) ? normalizeSpeed(value) : null
   } catch (error) {
-    logger.warn('speed-wheel: failed to save speed', error)
+    logger.warn('speed-wheel: failed to read local speed', error)
+    return null
   }
 }
 
-function scheduleSave(speed: number): void {
-  pendingSpeed = normalizeSpeed(speed)
-  window.clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(() => void flushSave(), SAVE_DEBOUNCE_MS)
+function writeLocalSpeed(speed: number): void {
+  try {
+    window.localStorage.setItem(SPEED_KEY, String(speed))
+  } catch (error) {
+    logger.warn('speed-wheel: failed to write local speed', error)
+  }
 }
 
-async function applyRememberedSpeed(video: HTMLVideoElement): Promise<void> {
-  if (!config.remember) return
-  const stored = await chrome.storage.sync.get(LAST_SPEED_KEY)
-  const speed = stored[ LAST_SPEED_KEY ]
-  if (typeof speed !== 'number' || !Number.isFinite(speed)) return
+/** 辅助同步：写 sync 失败只记日志，绝不影响本地倍速。沿用原来的 300ms 防抖。 */
+async function flushSync(): Promise<void> {
+  if (pendingSpeed === null) return
+  const speed = pendingSpeed
+  pendingSpeed = null
+  if (speed === lastSyncedSpeed) return
+  try {
+    await chrome.storage.sync.set({ [ SPEED_KEY ]: speed })
+    lastSyncedSpeed = speed
+  } catch (error) {
+    logger.warn('speed-wheel: failed to sync speed', error)
+  }
+}
+
+function scheduleSync(speed: number): void {
+  pendingSpeed = normalizeSpeed(speed)
+  window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => void flushSync(), SAVE_DEBOUNCE_MS)
+}
+
+/** 用户主动调速：先落地本地，再顺便同步到云端。 */
+function saveSpeed(speed: number): void {
   const normalized = normalizeSpeed(speed)
-  lastSavedSpeed = normalized
-  if (Math.abs(video.playbackRate - normalized) > 0.001) {
-    video.playbackRate = normalized
-    updateNativeLabel(normalized)
+  writeLocalSpeed(normalized)
+  scheduleSync(normalized)
+  logger.info('speed-wheel: saved speed', normalized)
+}
+
+/** 把某个速率应用到 video，不写入任何存储。 */
+function applySpeed(video: HTMLVideoElement, speed: number): void {
+  if (Math.abs(video.playbackRate - speed) < 0.001) return
+  video.playbackRate = speed
+  updateNativeLabel(speed)
+}
+
+/** 应用本机记忆倍速。 */
+function applyRememberedSpeed(video: HTMLVideoElement): void {
+  if (!config.remember) return
+  const speed = loadLocalSpeed()
+  if (speed === null) return
+  applySpeed(video, speed)
+}
+
+/** 云端只作辅助：有同步值就更新本地并应用，没有或失败就保持本地现状。 */
+async function loadSyncedSpeed(): Promise<void> {
+  if (!config.remember) return
+  try {
+    const stored = await chrome.storage.sync.get(SPEED_KEY)
+    const value = stored[ SPEED_KEY ]
+    if (typeof value !== 'number' || !Number.isFinite(value)) return
+    const normalized = normalizeSpeed(value)
+    lastSyncedSpeed = normalized
+    writeLocalSpeed(normalized)
+    boundVideos.forEach(({ video }) => applySpeed(video, normalized))
+  } catch (error) {
+    logger.warn('speed-wheel: failed to load synced speed', error)
   }
 }
 
@@ -185,7 +237,7 @@ function createOnWheel(target: HTMLElement): (event: WheelEvent) => void {
     video.playbackRate = next
     updateNativeLabel(next)
     showSpeed(next, getPlayerContainer(video))
-    if (config.remember) scheduleSave(next)
+    if (config.remember) saveSpeed(next)
   }
 }
 
@@ -200,9 +252,27 @@ function createOnContextMenu(target: HTMLElement): (event: MouseEvent) => void {
     video.playbackRate = 1
     updateNativeLabel(1)
     showSpeed(1, getPlayerContainer(video))
-    if (config.remember) scheduleSave(1)
+    if (config.remember) saveSpeed(1)
     logger.info('speed-wheel: reset to 1x via context menu')
   }
+}
+
+/**
+ * 监听 B站 原生倍速菜单的点击，标记接下来由它引起的 ratechange 是用户主动调速，
+ * 这样才保存新速率；其它 ratechange（B站 初始化 / 切视频重置）则纠正回记忆值。
+ */
+function bindNativeMenus(): void {
+  findAll<HTMLElement>(NATIVE_MENU_SELECTOR).forEach((menu) => {
+    if (boundMenus.has(menu)) return
+    const markNative = () => {
+      lastNativeClickAt = Date.now()
+      nativeClickPending = true
+    }
+    // pointerdown / click 都标记，兼容 B站 用 mousedown 或 click 触发调速
+    menu.addEventListener('pointerdown', markNative, { capture: true })
+    menu.addEventListener('click', markNative, { capture: true })
+    boundMenus.add(menu)
+  })
 }
 
 function bindVideos(): void {
@@ -211,11 +281,25 @@ function bindVideos(): void {
     const onRateChange = () => {
       const speed = normalizeSpeed(video.playbackRate)
       updateNativeLabel(speed)
-      if (config.remember) scheduleSave(speed)
+      if (!config.remember) return
+
+      // 用户刚点过原生倍速菜单：这次是用户选的速率，保存下来
+      if (nativeClickPending && Date.now() - lastNativeClickAt < NATIVE_CLICK_WINDOW_MS) {
+        nativeClickPending = false
+        saveSpeed(speed)
+        return
+      }
+
+      // 已经是记忆值，无需纠正
+      const remembered = loadLocalSpeed()
+      if (remembered !== null && Math.abs(speed - remembered) < 0.001) return
+
+      // B站 初始化 / 切视频把速率重置了，纠正回记忆值
+      applyRememberedSpeed(video)
     }
     video.addEventListener('ratechange', onRateChange)
     boundVideos.push({ video, onRateChange })
-    void applyRememberedSpeed(video)
+    applyRememberedSpeed(video)
   })
 }
 
@@ -233,16 +317,27 @@ function bindSpeedTargets(): void {
 function rescan(): void {
   bindVideos()
   bindSpeedTargets()
+  bindNativeMenus()
 }
 
 function handleStorageChanged(
   changes: { [ key: string ]: chrome.storage.StorageChange },
   areaName: string,
 ): void {
-  if (areaName !== 'sync' || !changes.settings) return
-  const settings = changes.settings.newValue as Settings | undefined
-  if (!settings?.speedWheel) return
-  config = { ...settings.speedWheel }
+  if (areaName !== 'sync') return
+  if (changes.settings) {
+    const settings = changes.settings.newValue as Settings | undefined
+    if (settings?.speedWheel) config = { ...settings.speedWheel }
+  }
+  if (changes[ SPEED_KEY ]) {
+    const value = changes[ SPEED_KEY ].newValue
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const normalized = normalizeSpeed(value)
+      lastSyncedSpeed = normalized
+      writeLocalSpeed(normalized)
+      boundVideos.forEach(({ video }) => applySpeed(video, normalized))
+    }
+  }
 }
 
 function unbindAll(): void {
@@ -259,7 +354,7 @@ function unbindAll(): void {
   overlayHost = null
   window.clearTimeout(hideTimer)
   window.clearTimeout(saveTimer)
-  void flushSave()
+  void flushSync()
 }
 
 export const speedWheelFeature: Feature = {
@@ -275,6 +370,7 @@ export const speedWheelFeature: Feature = {
     observer = new MutationObserver(() => rescan())
     observer.observe(document, { childList: true, subtree: true, attributes: true })
     rescan()
+    void loadSyncedSpeed()
     logger.info('speed-wheel: started', config)
   },
 
