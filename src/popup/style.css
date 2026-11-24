@@ -134,3 +134,25 @@ input[type="checkbox"] {
   line-height: 1.4;
   color: #9499a0;
 }
+
+.capture-btn {
+  width: 100%;
+  padding: 9px;
+  border: none;
+  border-radius: 8px;
+  background: #fb7299;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.capture-btn:hover {
+  background: #f25d8e;
+}
+
+.capture-btn:disabled {
+  background: #e3e5e7;
+  color: #9499a0;
+  cursor: not-allowed;
+}

@@ -1,11 +1,12 @@
 import './style.css'
-import { FEATURE_META } from '../shared/constants'
+import { CAPTURE_FRAME_MESSAGE, FEATURE_META } from '../shared/constants'
 import { getSettings, setFeatureEnabled, setSpeedWheelSettings } from '../shared/storage'
 import type { FeatureId } from '../shared/types'
 
 const list = document.querySelector<HTMLElement>('#feature-list')!
 const status = document.querySelector<HTMLElement>('#status')!
 const rememberCheckbox = document.querySelector<HTMLInputElement>('#speed-remember')!
+const captureBtn = document.querySelector<HTMLButtonElement>('#capture-frame')!
 
 function flashSaved(): void {
   status.textContent = '设置已保存'
@@ -53,6 +54,23 @@ list.addEventListener('change', async (event) => {
 rememberCheckbox.addEventListener('change', async () => {
   await setSpeedWheelSettings({ remember: rememberCheckbox.checked })
   flashSaved()
+})
+
+captureBtn.addEventListener('click', async () => {
+  const [ tab ] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id) {
+    status.textContent = '无法获取当前页面'
+    return
+  }
+  try {
+    await chrome.tabs.sendMessage(tab.id, CAPTURE_FRAME_MESSAGE)
+    status.textContent = '截图指令已发送'
+  } catch {
+    status.textContent = '未就绪，请刷新视频页'
+  }
+  window.setTimeout(() => {
+    status.textContent = ''
+  }, 1800)
 })
 
 void render()

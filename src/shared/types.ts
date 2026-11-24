@@ -2,7 +2,6 @@ export type FeatureId =
   | 'commentIp'
   | 'navCustomizer'
   | 'speedWheel'
-  | 'frameCapture'
   | 'immersiveProgress'
 
 export interface Feature {
