@@ -3,6 +3,8 @@ export type FeatureId = 'navCustomizer'
 export interface ChannelItem {
   name: string
   href: string
+  /** 频道图标地址（来自 header 频道面板，可能为空） */
+  icon?: string
 }
 
 export interface Feature {

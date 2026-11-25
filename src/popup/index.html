@@ -1,38 +1,41 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bili Boost</title>
-  </head>
-  <body>
-    <div class="app">
-      <header class="header">
-        <div class="logo">B</div>
-        <div>
-          <h1>Bili Boost</h1>
-          <p>B站功能优化</p>
-        </div>
-      </header>
-      <main id="feature-list" class="list"></main>
-      <section class="settings-section">
-        <h2>滚轮倍速设置</h2>
-        <label class="setting-row">
-          <span>记住倍速</span>
-          <span class="switch">
-            <input id="speed-remember" class="switch-input" type="checkbox" />
-            <span class="switch-track"><span class="switch-thumb"></span></span>
-          </span>
-        </label>
-        <p class="hint">悬停「倍速」按钮滚动调速（0.25x–5x）：2x 内每档 0.05x，2x 以上每档 0.3x；右键恢复 1x。倍速对全 B站生效；开启记住后以本机保存为主，Chrome 账号同步仅作辅助。</p>
-      </section>
-      <section class="settings-section">
-        <h2>视频帧读取</h2>
-        <button id="capture-frame" class="capture-btn" type="button">截取当前帧</button>
-        <p class="hint">点击播放器左下角时间戳旁的相机按钮，或点此按钮，将当前画面保存为 PNG。无需开关，装好即可用。</p>
-      </section>
-      <footer id="status" class="status"></footer>
-    </div>
-    <script type="module" src="./main.ts"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bili Boost</title>
+</head>
+
+<body>
+  <div class="app">
+    <header class="header">
+      <img class="logo" src="/icons/icon128.png" alt="Bili Boost" />
+      <div>
+        <h1>Bili Boost</h1>
+      </div>
+    </header>
+    <main id="feature-list" class="list"></main>
+    <section class="settings-section">
+      <h2>滚轮倍速设置</h2>
+      <label class="setting-row">
+        <span>记住倍速</span>
+        <span class="switch">
+          <input id="speed-remember" class="switch-input" type="checkbox" />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </label>
+      <p class="hint">悬停「倍速」按钮滚动调速（0.25x–5x），右键恢复 1x。倍速对全站生效；开启记住后 Chrome 账号也会同步。
+      </p>
+    </section>
+    <section class="settings-section">
+      <h2>视频帧读取</h2>
+      <button id="capture-frame" class="capture-btn" type="button">截取当前帧</button>
+      <p class="hint">点击播放器左下角的相机按钮，或点此按钮截取画面。</p>
+    </section>
+    <footer id="status" class="status"></footer>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+
 </html>

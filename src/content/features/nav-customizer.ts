@@ -34,6 +34,7 @@ let domReady = false
 let editing = false
 let styleEl: HTMLStyleElement | null = null
 let panel: HTMLElement | null = null
+let panelQuery = ''
 let pollTimer: number | undefined
 let lastNavSig = ''
 let navStableSince = 0
@@ -57,71 +58,92 @@ function keyOf(href: string): string {
 
 const HOME_KEY = keyOf(HOME_HREF)
 
-/** B站 KV_CONFIG_SDK 中单个频道配置 */
-interface ChannelConfigEntry {
-  name?: string
-  url?: string
-  channelId?: number
-  tid?: number
+/** 递归收集 root 及其所有 shadowRoot 内匹配 selector 的元素 */
+function deepQueryAll(root: ParentNode, selector: string): Element[] {
+  const found: Element[] = []
+  const visit = (scope: ParentNode): void => {
+    // 节点自身的 shadowRoot 也要进去（频道面板内容通常就在这里）
+    if (scope instanceof Element) {
+      const ownShadow = (scope as HTMLElement).shadowRoot
+      if (ownShadow) visit(ownShadow)
+    }
+    const matches = scope.querySelectorAll(selector)
+    for (let i = 0; i < matches.length; i += 1) found.push(matches[ i ])
+    const nodes = scope.querySelectorAll('*')
+    for (let i = 0; i < nodes.length; i += 1) {
+      const shadow = (nodes[ i ] as HTMLElement).shadowRoot
+      if (shadow) visit(shadow)
+    }
+  }
+  visit(root)
+  return found
+}
+
+function absoluteUrl(url: string): string {
+  return url.startsWith('//') ? `${location.protocol}${url}` : url
+}
+
+/** 频道名：优先专用类名 / title，最后退到去掉图标后的纯文本 */
+function channelName(anchor: Element): string {
+  const named = anchor.querySelector('.channel-panel__item-name, .channel-panel__item-text, .name')
+  if (named?.textContent?.trim()) return named.textContent!.trim()
+  const title = anchor.getAttribute('title') || anchor.getAttribute('aria-label')
+  if (title?.trim()) return title.trim()
+  const clone = anchor.cloneNode(true) as Element
+  const noise = clone.querySelectorAll('svg, img')
+  for (let i = 0; i < noise.length; i += 1) noise[ i ].remove()
+  return (clone.textContent ?? '').replace(/\s+/g, ' ').trim()
+}
+
+/** 频道图标：img src / 背景图 url / 内联 svg 依次尝试 */
+function channelIcon(anchor: Element): string | undefined {
+  const img = anchor.querySelector('img[src], img[data-src], img[srcset]')
+  const imgSrc = img?.getAttribute('src') || img?.getAttribute('data-src') || img?.getAttribute('srcset')?.split(' ')[ 0 ]
+  if (imgSrc) return absoluteUrl(imgSrc)
+
+  const nodes = [ anchor, ...Array.from(anchor.querySelectorAll('*')) ]
+  for (const el of nodes) {
+    const bg = (el as HTMLElement).style?.backgroundImage
+    const match = bg?.match(/url\(["']?([^"')]+)["']?\)/)
+    if (match?.[ 1 ]) return absoluteUrl(match[ 1 ])
+  }
+
+  const svg = anchor.querySelector('svg')
+  if (svg) {
+    try {
+      const clone = svg.cloneNode(true) as SVGElement
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+      const text = new XMLSerializer().serializeToString(clone)
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 /**
- * 从 B站 自身配置缓存 KV_CONFIG_SDK 读取频道列表。
- * 结构：localStorage['KV_CONFIG_SDK'] = {
- *   '<appKey>_<n>': { value: {
- *     'channel_list.anime': '{"name":"动画","channelId":2,"tid":23,"url":"//www.bilibili.com/anime/"}',
- *     'channel_list.channel_page_sort': '["douga","game",...]',
- *     ...
- *   } }
- * }
- * 读不到（该域名无此 key / 结构变化）返回 null，调用方回退到内置列表。
+ * 从 B站 header 的 <bili-header-channel-panel> 读取所有可用频道（含图标）。
+ * 面板可能位于 light DOM 或任意 shadowRoot 中，故递归遍历所有 root。
+ * 返回 [] 表示当前页面没有该面板，调用方回退到内置列表。
  */
-function readChannelsFromConfig(): ChannelItem[] | null {
-  try {
-    const raw = localStorage.getItem('KV_CONFIG_SDK')
-    if (!raw) return null
-
-    const sdk = JSON.parse(raw) as Record<string, { value?: Record<string, string> }>
-    let value: Record<string, string> | undefined
-    for (const entry of Object.values(sdk)) {
-      if (entry?.value && Object.keys(entry.value).some((k) => k.startsWith('channel_list.'))) {
-        value = entry.value
-        break
-      }
-    }
-    if (!value) return null
-
-    let order: string[] = []
-    try {
-      const sortRaw = value[ 'channel_list.channel_page_sort' ]
-      if (sortRaw) order = JSON.parse(sortRaw) as string[]
-    } catch {
-      // 排序表异常不影响列表本身
-    }
-
-    const found: { id: string; item: ChannelItem }[] = []
-    for (const [ key, json ] of Object.entries(value)) {
-      if (!key.startsWith('channel_list.')) continue
-      const id = key.slice('channel_list.'.length)
-      if (!id || id === 'all' || id === 'channel_page_sort') continue
-      try {
-        const data = JSON.parse(json) as ChannelConfigEntry
-        if (data.name && data.url) found.push({ id, item: { name: data.name, href: data.url } })
-      } catch {
-        // 单条解析失败则跳过
-      }
-    }
-    if (!found.length) return null
-
-    found.sort((a, b) => {
-      const ia = order.indexOf(a.id)
-      const ib = order.indexOf(b.id)
-      return (ia < 0 ? Number.MAX_SAFE_INTEGER : ia) - (ib < 0 ? Number.MAX_SAFE_INTEGER : ib)
-    })
-    return found.map((e) => e.item)
-  } catch {
-    return null
+function readChannelsFromDom(): ChannelItem[] {
+  const panels = deepQueryAll(document, 'bili-header-channel-panel, .bili-header-channel-panel')
+  if (!panels.length) return []
+  const anchors = deepQueryAll(panels[ 0 ], 'a[href]')
+  const seen = new Set<string>()
+  const channels: ChannelItem[] = []
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute('href') ?? ''
+    if (!/^(https?:)?\/\//i.test(href)) continue
+    const key = keyOf(href)
+    if (!key || key === HOME_KEY || seen.has(key)) continue
+    const name = channelName(anchor)
+    if (!name) continue
+    seen.add(key)
+    channels.push({ name, href, icon: channelIcon(anchor) })
   }
+  return channels
 }
 
 function itemAnchor(item: HTMLElement): HTMLAnchorElement | null {
@@ -177,39 +199,130 @@ const CSS = `
 #${PANEL_ID} {
   position: fixed;
   z-index: 10000;
-  width: 320px;
-  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  width: 440px;
+  max-height: min(560px, calc(100vh - 40px));
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 16px;
   background: #fff;
-  box-shadow: 0 6px 24px rgba(0,0,0,.18);
+  box-shadow: 0 12px 40px rgba(0,0,0,.2), 0 2px 8px rgba(0,0,0,.08);
   color: #18191c;
-  font-size: 13px;
+  font-size: 14px;
+  animation: bb-panel-in .18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  #${PANEL_ID} { animation: none; }
+}
+@keyframes bb-panel-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: none; }
 }
 .bb-panel-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid #e3e5e7;
-  font-weight: 500;
+  padding: 20px 22px 14px;
 }
-.bb-panel-close { color: #9499a0; cursor: pointer; font-weight: 400; }
-.bb-panel-close:hover { color: #18191c; }
-.bb-panel-list { max-height: 350px; overflow-y: auto; padding: 6px; }
+.bb-panel-title { font-size: 17px; font-weight: 600; }
+.bb-panel-subtitle { margin-top: 5px; font-size: 12px; color: #9499a0; }
+.bb-panel-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #fff1f5;
+  color: #fb7299;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+.bb-panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #f6f7f8;
+  color: #9499a0;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+.bb-panel-close:hover { background: #e3e5e7; color: #18191c; }
+.bb-panel-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 22px 14px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #f6f7f8;
+}
+.bb-panel-search svg { flex: none; }
+.bb-panel-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #18191c;
+  font-size: 13px;
+}
+.bb-panel-search input::placeholder { color: #b4b2a9; }
+.bb-panel-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 8px; }
 .bb-panel-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 7px 8px;
-  border-radius: 6px;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .bb-panel-item:hover { background: #f6f7f8; }
-.bb-panel-item.bb-added { color: #9499a0; cursor: default; }
+.bb-panel-item.bb-added { cursor: default; }
 .bb-panel-item.bb-added:hover { background: transparent; }
-.bb-panel-tag { font-size: 11px; color: #fb7299; }
-.bb-panel-full { padding: 16px 12px; text-align: center; color: #9499a0; }
+.bb-panel-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #f6f7f8;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  overflow: hidden;
+}
+.bb-panel-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.bb-panel-name { flex: 1; font-size: 14px; }
+.bb-panel-item.bb-added .bb-panel-name { color: #9499a0; }
+.bb-panel-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #fb7299;
+  border-radius: 50%;
+  color: #fb7299;
+  font-size: 16px;
+  line-height: 1;
+}
+.bb-panel-item:hover .bb-panel-plus { background: #fb7299; color: #fff; }
+.bb-panel-item.bb-added .bb-panel-plus { border-color: #e3e5e7; color: #b4b2a9; background: transparent; }
+.bb-panel-empty { padding: 48px 12px; text-align: center; color: #9499a0; }
+.bb-panel-footer {
+  padding: 12px 22px;
+  border-top: 1px solid #e3e5e7;
+  color: #9499a0;
+  font-size: 12px;
+}
 `
 
 function ensureStyle(): void {
@@ -539,27 +652,68 @@ function exitEditMode(): void {
   logger.info('nav-customizer: edit mode off')
 }
 
+/** 频道名 → 稳定的主题色，用于列表头像 */
+const AVATAR_COLORS = [
+  '#fb7299', '#f5a623', '#23c2a0', '#5b8ff9', '#9b7bf0',
+  '#f2764c', '#4dc4d8', '#e0628f', '#7bb13c', '#b07be0',
+]
+function avatarColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[ hash % AVATAR_COLORS.length ]
+}
+
 function panelElement(): HTMLElement {
   if (panel?.isConnected) return panel
   panel = document.getElementById(PANEL_ID) as HTMLElement | null
   if (!panel) {
     panel = document.createElement('div')
     panel.id = PANEL_ID
+
     const head = document.createElement('div')
     head.className = 'bb-panel-head'
-    const title = document.createElement('span')
+    const titleBox = document.createElement('div')
+    const title = document.createElement('div')
+    title.className = 'bb-panel-title'
     title.textContent = '添加频道'
+    const count = document.createElement('span')
+    count.className = 'bb-panel-count'
+    title.appendChild(count)
+    const subtitle = document.createElement('div')
+    subtitle.className = 'bb-panel-subtitle'
+    subtitle.textContent = '选择一个频道添加到顶部导航'
+    titleBox.append(title, subtitle)
     const close = document.createElement('span')
     close.className = 'bb-panel-close'
-    close.textContent = '关闭'
+    close.textContent = '×'
+    close.title = '关闭'
     close.addEventListener('click', (e) => {
       e.stopPropagation()
       closePanel()
     })
-    head.append(title, close)
+    head.append(titleBox, close)
+
+    const search = document.createElement('div')
+    search.className = 'bb-panel-search'
+    search.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9499a0" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>'
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.placeholder = '搜索频道'
+    input.value = panelQuery
+    input.addEventListener('input', () => {
+      panelQuery = input.value.trim()
+      renderPanelList()
+    })
+    search.appendChild(input)
+
     const list = document.createElement('div')
     list.className = 'bb-panel-list'
-    panel.append(head, list)
+
+    const footer = document.createElement('div')
+    footer.className = 'bb-panel-footer'
+    footer.textContent = `导航最多显示 ${MAX_NAV_CHANNELS} 项（含原生菜单）`
+
+    panel.append(head, search, list, footer)
     document.body.appendChild(panel)
   }
   return panel
@@ -568,36 +722,56 @@ function panelElement(): HTMLElement {
 function renderPanelList(): void {
   const p = panelElement()
   const list = p.querySelector<HTMLElement>('.bb-panel-list')!
-  const head = p.querySelector<HTMLElement>('.bb-panel-head span')!
+  const countEl = p.querySelector<HTMLElement>('.bb-panel-count')!
   const count = visibleNavCount()
-  head.textContent = `添加频道（${count}/${MAX_NAV_CHANNELS}）`
+  countEl.textContent = `${count}/${MAX_NAV_CHANNELS}`
   list.replaceChildren()
 
-  if (count >= MAX_NAV_CHANNELS) {
-    const full = document.createElement('div')
-    full.className = 'bb-panel-full'
-    full.textContent = `导航最多显示 ${MAX_NAV_CHANNELS} 项（含原生菜单），请先删除一些`
-    list.appendChild(full)
+  // 直接从 header 频道面板 DOM 读取（完整列表 + 图标），读不到再回退内置列表
+  const fromDom = readChannelsFromDom()
+  const allChannels = fromDom.length ? fromDom : BILIBILI_CHANNELS
+  logger.info(`nav-customizer: channels from ${fromDom.length ? `header DOM (${fromDom.length}): ${fromDom.slice(0, 6).map((c) => c.name).join('、')}…` : 'builtin list'}`)
+  const channels = panelQuery
+    ? allChannels.filter((c) => c.name.toLowerCase().includes(panelQuery.toLowerCase()))
+    : allChannels
+
+  if (!channels.length) {
+    const empty = document.createElement('div')
+    empty.className = 'bb-panel-empty'
+    empty.textContent = panelQuery ? '没有匹配的频道' : '暂无可添加的频道'
+    list.appendChild(empty)
     return
   }
 
-  // 优先用 B站 自身配置缓存里的频道（带官方排序），读不到则回退内置列表
-  const fromConfig = readChannelsFromConfig()
-  const channels = fromConfig ?? BILIBILI_CHANNELS
-  logger.info(`nav-customizer: channels from ${fromConfig ? `KV_CONFIG_SDK (${fromConfig.length})` : 'builtin list'}`)
+  const full = count >= MAX_NAV_CHANNELS
   for (const channel of channels) {
     const added = config.channels.some((c) => keyOf(c.href) === keyOf(channel.href))
     const row = document.createElement('div')
-    row.className = `bb-panel-item${added ? ' bb-added' : ''}`
-    const name = document.createElement('span')
-    name.textContent = channel.name
-    row.appendChild(name)
-    if (added) {
-      const tag = document.createElement('span')
-      tag.className = 'bb-panel-tag'
-      tag.textContent = '已添加'
-      row.appendChild(tag)
+    row.className = `bb-panel-item${added || full ? ' bb-added' : ''}`
+
+    const avatar = document.createElement('span')
+    avatar.className = 'bb-panel-avatar'
+    if (channel.icon) {
+      const img = document.createElement('img')
+      img.src = channel.icon
+      img.alt = ''
+      avatar.appendChild(img)
     } else {
+      avatar.style.background = avatarColor(channel.name)
+      avatar.textContent = channel.name.slice(0, 1)
+    }
+
+    const name = document.createElement('span')
+    name.className = 'bb-panel-name'
+    name.textContent = channel.name
+
+    const plus = document.createElement('span')
+    plus.className = 'bb-panel-plus'
+    plus.textContent = added ? '✓' : '+'
+
+    row.append(avatar, name, plus)
+
+    if (!added && !full) {
       row.addEventListener('click', (e) => {
         e.stopPropagation()
         // 面板停留期间数量可能已变（如其它设备同步），再校验一次总数
@@ -605,7 +779,8 @@ function renderPanelList(): void {
           renderPanelList()
           return
         }
-        config.channels.push({ ...channel })
+        // 图标只用于弹窗展示，不写入配置，避免 data URI 占用 sync 配额
+        config.channels.push({ name: channel.name, href: channel.href })
         save()
         renderAll()
         renderPanelList()
@@ -616,11 +791,14 @@ function renderPanelList(): void {
 }
 
 function openPanel(): void {
+  panelQuery = ''
   const p = panelElement()
+  const input = p.querySelector<HTMLInputElement>('.bb-panel-search input')
+  if (input) input.value = ''
   renderPanelList()
   const rect = p.getBoundingClientRect()
-  p.style.top = `${Math.max(12, Math.min(80, window.innerHeight - rect.height - 20))}px`
-  p.style.left = `${Math.max(12, window.innerWidth / 2 - 160)}px`
+  p.style.top = `${Math.max(12, Math.min(100, (window.innerHeight - rect.height) / 2))}px`
+  p.style.left = `${Math.max(12, (window.innerWidth - rect.width) / 2)}px`
 }
 
 function closePanel(): void {

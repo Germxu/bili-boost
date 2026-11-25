@@ -2,8 +2,8 @@ import type { ChannelItem, FeatureId, Settings } from './types'
 
 export const FEATURE_META: Record<FeatureId, { name: string; description: string }> = {
   navCustomizer: {
-    name: '顶部导航自定义',
-    description: '长按菜单进入编辑，可删除或添加菜单（总数最多 10 项）',
+    name: '自定义导航',
+    description: '长按菜单进入编辑，可删除或添加菜单',
   },
 }
 
