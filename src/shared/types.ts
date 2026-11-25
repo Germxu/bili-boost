@@ -1,8 +1,4 @@
-export type FeatureId =
-  | 'commentIp'
-  | 'navCustomizer'
-  | 'speedWheel'
-  | 'immersiveProgress'
+export type FeatureId = 'commentIp' | 'navCustomizer' | 'speedWheel'
 
 export interface Feature {
   id: FeatureId

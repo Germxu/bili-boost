@@ -2,12 +2,14 @@ import { logger } from '../shared/logger'
 import { getSettings } from '../shared/storage'
 import type { Feature, Settings } from '../shared/types'
 import { initFrameCapture } from './features/frame-capture'
+import { initImmersiveProgress } from './features/immersive-progress'
 import { commentIpFeature, speedWheelFeature } from './features'
 
 const features: Feature[] = [commentIpFeature, speedWheelFeature]
 
-// 截图功能无需开关，注册即生效
+// 截图、沉浸式进度条无需开关，注册即生效
 initFrameCapture()
+initImmersiveProgress()
 
 async function startFeature(feature: Feature): Promise<void> {
   try {
