@@ -1,7 +1,10 @@
 import { logger } from '../../shared/logger'
-import { createPointerIdleTracker, type PointerIdleTracker } from '../utils/pointer-idle'
 
 const PROGRESS_HOST_ID = 'bili-boost-progress-host'
+const OBSERVE_OPTIONS: MutationObserverInit = { childList: true, subtree: true }
+// 新版 B站 bpx 播放器用这个属性驱动控制栏显隐：true=隐藏，false=显示
+const CTRL_HIDDEN_ATTR = 'data-ctrl-hidden'
+const CTRL_HOST_SELECTOR = '.bpx-player-container'
 
 interface ProgressBar {
   host: HTMLElement
@@ -11,10 +14,12 @@ interface ProgressBar {
   video: HTMLVideoElement
   container: HTMLElement
   listeners: Array<[ keyof HTMLVideoElementEventMap, EventListener ]>
-  idleTracker?: PointerIdleTracker
+  ctrlHost: HTMLElement | null
+  ctrlObserver: MutationObserver | null
 }
 
 let observer: MutationObserver | null = null
+let injectScheduled = false
 const injected = new WeakMap<HTMLElement, ProgressBar>()
 
 function findAll<T extends Element>(selector: string, root: ParentNode = document, depth = 0): T[] {
@@ -30,11 +35,46 @@ function findVideos(): HTMLVideoElement[] {
   return findAll<HTMLVideoElement>('video')
 }
 
-function getPlayerContainer(video: HTMLVideoElement): HTMLElement {
+/** 找包含视频与控制栏的播放器根节点，可跨越 Shadow DOM。 */
+function getPlayerRoot(video: HTMLElement): HTMLElement {
+  let el: Element | null = video
+  while (el) {
+    if (el.matches('.bpx-player, #bilibiliPlayer, .bilibili-player')) return el as HTMLElement
+    const parent: HTMLElement | null = el.parentElement
+    if (parent) {
+      el = parent
+      continue
+    }
+    const node = el.getRootNode()
+    el = node instanceof ShadowRoot ? node.host : null
+  }
+  const node = video.getRootNode()
+  return ((node instanceof ShadowRoot ? node.host : null) ?? video.parentElement ?? document.body) as HTMLElement
+}
+
+function getPlayerContainer(video: HTMLVideoElement, root: HTMLElement): HTMLElement {
   const candidate = video.closest<HTMLElement>(
     '.bpx-player-video-wrap, #bilibiliPlayer, .bilibili-player',
   )
-  return candidate ?? (video.parentElement as HTMLElement | null) ?? document.body
+  return candidate ?? (video.parentElement as HTMLElement | null) ?? root
+}
+
+/** 找驱动控制栏显隐的 .bpx-player-container，先查子树再查祖先，均跨 Shadow DOM。 */
+function findCtrlHost(root: HTMLElement): HTMLElement | null {
+  const found = findAll<HTMLElement>(CTRL_HOST_SELECTOR, root)[0]
+  if (found) return found
+  let el: Element | null = root
+  for (let depth = 0; el && depth < 16; depth++) {
+    if (el instanceof HTMLElement && el.matches(CTRL_HOST_SELECTOR)) return el
+    const parent: HTMLElement | null = el.parentElement
+    if (parent) {
+      el = parent
+      continue
+    }
+    const node = el.getRootNode()
+    el = node instanceof ShadowRoot ? node.host : null
+  }
+  return null
 }
 
 function formatTime(seconds: number): string {
@@ -64,15 +104,30 @@ function setVisible(bar: ProgressBar, visible: boolean): void {
   bar.time.style.opacity = visible ? '1' : '0'
 }
 
+/**
+ * 唯一的显隐依据：控制栏的 data-ctrl-hidden。
+ * - "false"（控制栏显示中）→ 隐藏我们自己的进度条，避免遮挡；
+ * - "true"（控制栏隐藏）→ 显示进度条；
+ * - 属性缺失 / 找不到容器（状态未知）→ 默认显示，保证功能仍可见。
+ */
+function syncVisibility(bar: ProgressBar): void {
+  const raw = bar.ctrlHost?.getAttribute(CTRL_HIDDEN_ATTR)
+  setVisible(bar, raw !== 'false')
+}
+
 function cleanup(bar: ProgressBar): void {
   bar.host.remove()
-  bar.idleTracker?.destroy()
+  bar.ctrlObserver?.disconnect()
   for (const [ event, handler ] of bar.listeners) {
     bar.video.removeEventListener(event, handler)
   }
 }
 
-function createBar(video: HTMLVideoElement, container: HTMLElement): ProgressBar {
+function createBar(
+  video: HTMLVideoElement,
+  container: HTMLElement,
+  ctrlHost: HTMLElement | null,
+): ProgressBar {
   const host = document.createElement('div')
   host.id = PROGRESS_HOST_ID
   host.style.cssText = [
@@ -128,14 +183,18 @@ function createBar(video: HTMLVideoElement, container: HTMLElement): ProgressBar
     video,
     container,
     listeners: [],
+    ctrlHost,
+    ctrlObserver: null,
   }
 
-  // 鼠标一动就隐藏（原生控制栏会出现），静止超时后自动显示。
-  // 显隐只由空闲检测驱动，timeupdate 等只更新宽度/文字，避免覆盖判定。
-  bar.idleTracker = createPointerIdleTracker(container, {
-    onActive: () => setVisible(bar, false),
-    onIdle: () => setVisible(bar, true),
-  })
+  // 只跟随 B站 自己的控制栏状态：属性一变就同步，与鼠标事件解耦。
+  if (ctrlHost) {
+    bar.ctrlObserver = new MutationObserver(() => syncVisibility(bar))
+    bar.ctrlObserver.observe(ctrlHost, {
+      attributes: true,
+      attributeFilter: [ CTRL_HIDDEN_ATTR ],
+    })
+  }
 
   const update = () => render(bar)
   const events: Array<keyof HTMLVideoElementEventMap> = [
@@ -150,33 +209,56 @@ function createBar(video: HTMLVideoElement, container: HTMLElement): ProgressBar
   })
 
   render(bar)
-  // 注入时先显示；若鼠标正停在画面上，随后的 pointermove 会隐藏并重新计时
-  setVisible(bar, true)
+  syncVisibility(bar)
   return bar
 }
 
 function injectBars(): void {
-  findVideos().forEach((video) => {
-    const container = getPlayerContainer(video)
-    const tracked = injected.get(container)
-    if (tracked?.host.isConnected) {
-      if (tracked.video === video) return
-      cleanup(tracked)
-    }
+  // 注入过程会改动 DOM，先断开观察，避免自己的改动反过来触发下一轮注入
+  observer?.disconnect()
+  try {
+    const seen = new Set<HTMLElement>()
+    findVideos().forEach((video) => {
+      const root = getPlayerRoot(video)
+      const container = getPlayerContainer(video, root)
+      // 一个容器只挂一条进度条，避免多个 video（广告/小窗等）互相顶替造成重注入循环
+      if (seen.has(container)) return
+      seen.add(container)
 
-    // 容器节点被重建但旧 host 仍在原位时，清掉避免重复
-    container.querySelectorAll(`#${PROGRESS_HOST_ID}`).forEach((el) => el.remove())
+      const ctrlHost = findCtrlHost(root)
+      const tracked = injected.get(container)
+      // 已有进度条及其绑定的视频、控制栏容器都还在页面上就沿用，不反复重建
+      if (
+        tracked?.host.isConnected &&
+        tracked.video.isConnected &&
+        tracked.ctrlHost === ctrlHost &&
+        (!tracked.ctrlHost || tracked.ctrlHost.isConnected)
+      ) return
+      if (tracked) cleanup(tracked)
+      container.querySelectorAll(`#${PROGRESS_HOST_ID}`).forEach((el) => el.remove())
 
-    const bar = createBar(video, container)
-    injected.set(container, bar)
-    logger.info('immersive-progress: injected')
-  })
+      const bar = createBar(video, container, ctrlHost)
+      injected.set(container, bar)
+    })
+  } finally {
+    observer?.observe(document, OBSERVE_OPTIONS)
+  }
+}
+
+/** 合并短时间内的大量 DOM 变动，避免播放器频繁重建时反复注入。 */
+function scheduleInject(): void {
+  if (injectScheduled) return
+  injectScheduled = true
+  window.setTimeout(() => {
+    injectScheduled = false
+    injectBars()
+  }, 100)
 }
 
 /** 沉浸式进度条始终启用，不挂到功能开关体系，装了扩展即可用。 */
 export function initImmersiveProgress(): void {
-  observer = new MutationObserver(() => injectBars())
-  observer.observe(document, { childList: true, subtree: true })
+  observer = new MutationObserver(scheduleInject)
+  observer.observe(document, OBSERVE_OPTIONS)
   injectBars()
   logger.info('immersive-progress: ready')
 }
