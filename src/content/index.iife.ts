@@ -1,13 +1,17 @@
 import { logger } from '../shared/logger'
 import { getSettings } from '../shared/storage'
 import type { Feature, Settings } from '../shared/types'
+import { initCommentIp } from './features/comment-ip'
 import { initFrameCapture } from './features/frame-capture'
 import { initImmersiveProgress } from './features/immersive-progress'
-import { commentIpFeature, speedWheelFeature } from './features'
+import { initSpeedWheel } from './features/speed-wheel'
+import { navCustomizerFeature } from './features'
 
-const features: Feature[] = [commentIpFeature, speedWheelFeature]
+const features: Feature[] = [navCustomizerFeature]
 
-// 截图、沉浸式进度条无需开关，注册即生效
+// IP 属地、倍速、截图、沉浸式进度条常驻启用，无需开关
+initCommentIp()
+void initSpeedWheel()
 initFrameCapture()
 initImmersiveProgress()
 

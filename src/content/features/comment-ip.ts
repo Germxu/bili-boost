@@ -1,12 +1,7 @@
 import { logger } from '../../shared/logger'
-import type { Feature, Settings } from '../../shared/types'
 
 const FLAG_KEY = 'biliBoost_ipEnabled'
 const INJECT_MESSAGE = 'BILIBOOST_INJECT_IP_LOCATION'
-
-function setFlag(enabled: boolean): void {
-  localStorage.setItem(FLAG_KEY, enabled ? '1' : '0')
-}
 
 function requestMainWorldInjection(): void {
   void chrome.runtime.sendMessage({ type: INJECT_MESSAGE }).catch((error: unknown) => {
@@ -14,33 +9,9 @@ function requestMainWorldInjection(): void {
   })
 }
 
-function handleSettingsChanged(
-  changes: { [key: string]: chrome.storage.StorageChange },
-  areaName: string,
-): void {
-  if (areaName !== 'sync' || !changes.settings) return
-  const settings = changes.settings.newValue as Settings | undefined
-  setFlag(settings?.features.commentIp ?? false)
+/** IP 属地显示常驻启用，无开关：写标志并请求 MAIN world 注入 */
+export function initCommentIp(): void {
+  localStorage.setItem(FLAG_KEY, '1')
   requestMainWorldInjection()
-}
-
-export const commentIpFeature: Feature = {
-  id: 'commentIp',
-  name: '评论区 IP属地显示',
-  description: '在视频评论区显示发布者的 IP 属地信息',
-  enabledByDefault: true,
-
-  start(): void {
-    setFlag(true)
-    chrome.storage.onChanged.addListener(handleSettingsChanged)
-    requestMainWorldInjection()
-    logger.info('comment-ip: main-world injection requested')
-  },
-
-  stop(): void {
-    setFlag(false)
-    chrome.storage.onChanged.removeListener(handleSettingsChanged)
-    requestMainWorldInjection()
-    logger.info('comment-ip: disabled')
-  },
+  logger.info('comment-ip: main-world injection requested')
 }

@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from './constants'
-import type { FeatureId, Settings, SpeedWheelSettings } from './types'
+import type { FeatureId, NavCustomizerSettings, Settings, SpeedWheelSettings } from './types'
 
 const KEY = 'settings'
 
@@ -9,6 +9,7 @@ export async function getSettings(): Promise<Settings> {
   return {
     features: { ...DEFAULT_SETTINGS.features, ...value?.features },
     speedWheel: { ...DEFAULT_SETTINGS.speedWheel, ...value?.speedWheel },
+    navCustomizer: { ...DEFAULT_SETTINGS.navCustomizer, ...value?.navCustomizer },
   }
 }
 
@@ -21,5 +22,11 @@ export async function setFeatureEnabled(id: FeatureId, enabled: boolean): Promis
 export async function setSpeedWheelSettings(patch: Partial<SpeedWheelSettings>): Promise<void> {
   const settings = await getSettings()
   settings.speedWheel = { ...settings.speedWheel, ...patch }
+  await chrome.storage.sync.set({ [KEY]: settings })
+}
+
+export async function setNavCustomizerSettings(patch: Partial<NavCustomizerSettings>): Promise<void> {
+  const settings = await getSettings()
+  settings.navCustomizer = { ...settings.navCustomizer, ...patch }
   await chrome.storage.sync.set({ [KEY]: settings })
 }

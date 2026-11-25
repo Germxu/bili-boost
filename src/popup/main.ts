@@ -15,6 +15,25 @@ function flashSaved(): void {
   }, 1500)
 }
 
+function createSwitch(checked: boolean): HTMLElement {
+  const toggle = document.createElement('span')
+  toggle.className = 'switch'
+
+  const checkbox = document.createElement('input')
+  checkbox.type = 'checkbox'
+  checkbox.className = 'switch-input'
+  checkbox.checked = checked
+
+  const track = document.createElement('span')
+  track.className = 'switch-track'
+  const thumb = document.createElement('span')
+  thumb.className = 'switch-thumb'
+  track.appendChild(thumb)
+
+  toggle.append(checkbox, track)
+  return toggle
+}
+
 async function render(): Promise<void> {
   const settings = await getSettings()
   list.replaceChildren()
@@ -32,19 +51,9 @@ async function render(): Promise<void> {
     desc.textContent = meta.description
     text.append(title, desc)
 
-    const toggle = document.createElement('span')
-    toggle.className = 'switch'
-    const checkbox = document.createElement('input')
-    checkbox.type = 'checkbox'
-    checkbox.className = 'switch-input'
-    checkbox.checked = settings.features[id]
+    const toggle = createSwitch(settings.features[id])
+    const checkbox = toggle.querySelector('input')!
     checkbox.dataset.id = id
-    const track = document.createElement('span')
-    track.className = 'switch-track'
-    const thumb = document.createElement('span')
-    thumb.className = 'switch-thumb'
-    track.appendChild(thumb)
-    toggle.append(checkbox, track)
 
     row.append(text, toggle)
     list.appendChild(row)

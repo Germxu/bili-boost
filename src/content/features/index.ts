@@ -1,2 +1,1 @@
-export { commentIpFeature } from './comment-ip'
-export { speedWheelFeature } from './speed-wheel'
+export { navCustomizerFeature } from './nav-customizer'

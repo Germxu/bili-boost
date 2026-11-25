@@ -1,1 +1,0 @@
-var e={commentIp:{name:`评论区 IP属地显示`,description:`在视频评论区显示发布者的 IP 属地信息`},navCustomizer:{name:`顶部导航自定义`,description:`自定义 B站 顶部左侧导航项`},speedWheel:{name:`滚轮倍速播放`,description:`悬停倍速按钮滚轮调速（0.25x–5x），右键恢复 1x`}},t={features:{commentIp:!0,navCustomizer:!1,speedWheel:!1},speedWheel:{remember:!0}},n=`[BiliBoost]`,r=`BILIBOOST_CAPTURE_FRAME`;export{n as i,t as n,e as r,r as t};

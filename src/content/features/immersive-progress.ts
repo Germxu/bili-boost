@@ -1,6 +1,8 @@
 import { logger } from '../../shared/logger'
 
 const PROGRESS_HOST_ID = 'bili-boost-progress-host'
+/** 进度条插入完成后发出，供其它功能等播放器就绪后再介入 DOM */
+export const PLAYER_READY_EVENT = 'bili-boost:player-ready'
 const OBSERVE_OPTIONS: MutationObserverInit = { childList: true, subtree: true }
 // 新版 B站 bpx 播放器用这个属性驱动控制栏显隐：true=隐藏，false=显示
 const CTRL_HIDDEN_ATTR = 'data-ctrl-hidden'
@@ -61,7 +63,7 @@ function getPlayerContainer(video: HTMLVideoElement, root: HTMLElement): HTMLEle
 
 /** 找驱动控制栏显隐的 .bpx-player-container，先查子树再查祖先，均跨 Shadow DOM。 */
 function findCtrlHost(root: HTMLElement): HTMLElement | null {
-  const found = findAll<HTMLElement>(CTRL_HOST_SELECTOR, root)[0]
+  const found = findAll<HTMLElement>(CTRL_HOST_SELECTOR, root)[ 0 ]
   if (found) return found
   let el: Element | null = root
   for (let depth = 0; el && depth < 16; depth++) {
@@ -156,13 +158,13 @@ function createBar(
   const time = document.createElement('div')
   time.style.cssText = [
     'position:absolute',
-    'right:8px',
+    'right:4px',
     'bottom:6px',
     'padding:2px 6px',
     'border-radius:4px',
-    'background:rgba(0,0,0,.6)',
-    'color:#fff',
-    'font:11px/1.4 system-ui,-apple-system,sans-serif',
+    'background:rgba(0,0,0,.38)',
+    'color:#fff9',
+    'font:12px/1.4 system-ui,-apple-system,sans-serif',
     'white-space:nowrap',
     'opacity:0',
     'transition:opacity .2s ease',
@@ -239,6 +241,7 @@ function injectBars(): void {
 
       const bar = createBar(video, container, ctrlHost)
       injected.set(container, bar)
+      document.dispatchEvent(new CustomEvent(PLAYER_READY_EVENT))
     })
   } finally {
     observer?.observe(document, OBSERVE_OPTIONS)

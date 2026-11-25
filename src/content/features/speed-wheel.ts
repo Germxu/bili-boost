@@ -1,7 +1,7 @@
 import { DEFAULT_SETTINGS, SPEED_RANGE } from '../../shared/constants'
 import { logger } from '../../shared/logger'
 import { getSettings } from '../../shared/storage'
-import type { Feature, Settings, SpeedWheelSettings } from '../../shared/types'
+import type { Settings, SpeedWheelSettings } from '../../shared/types'
 
 const SPEED_KEY = 'biliBoost_lastPlaybackRate'
 const OVERLAY_HOST_ID = 'bili-boost-speed-host'
@@ -340,45 +340,14 @@ function handleStorageChanged(
   }
 }
 
-function unbindAll(): void {
-  for (const item of boundVideos) {
-    item.video.removeEventListener('ratechange', item.onRateChange)
-  }
-  for (const item of boundTargets) {
-    item.element.removeEventListener('wheel', item.onWheel, { capture: true })
-    item.element.removeEventListener('contextmenu', item.onContextMenu, { capture: true })
-  }
-  boundVideos.length = 0
-  boundTargets.length = 0
-  overlayHost?.remove()
-  overlayHost = null
-  window.clearTimeout(hideTimer)
-  window.clearTimeout(saveTimer)
-  void flushSync()
-}
-
-export const speedWheelFeature: Feature = {
-  id: 'speedWheel',
-  name: '滚轮倍速播放',
-  description: '悬停倍速按钮滚轮调速（0.25x–5x），右键恢复 1x',
-  enabledByDefault: false,
-
-  async start(): Promise<void> {
-    const settings = await getSettings()
-    config = { ...settings.speedWheel }
-    chrome.storage.onChanged.addListener(handleStorageChanged)
-    observer = new MutationObserver(() => rescan())
-    observer.observe(document, { childList: true, subtree: true, attributes: true })
-    rescan()
-    void loadSyncedSpeed()
-    logger.info('speed-wheel: started', config)
-  },
-
-  stop(): void {
-    chrome.storage.onChanged.removeListener(handleStorageChanged)
-    observer?.disconnect()
-    observer = null
-    unbindAll()
-    logger.info('speed-wheel: stopped')
-  },
+/** 滚轮倍速常驻启用，无功能开关；「记住倍速」与 sync 速度同步仍走设置项 */
+export async function initSpeedWheel(): Promise<void> {
+  const settings = await getSettings()
+  config = { ...settings.speedWheel }
+  chrome.storage.onChanged.addListener(handleStorageChanged)
+  observer = new MutationObserver(() => rescan())
+  observer.observe(document, { childList: true, subtree: true, attributes: true })
+  rescan()
+  void loadSyncedSpeed()
+  logger.info('speed-wheel: ready', config)
 }
