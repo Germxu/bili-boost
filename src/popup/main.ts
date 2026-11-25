@@ -32,12 +32,21 @@ async function render(): Promise<void> {
     desc.textContent = meta.description
     text.append(title, desc)
 
+    const toggle = document.createElement('span')
+    toggle.className = 'switch'
     const checkbox = document.createElement('input')
     checkbox.type = 'checkbox'
+    checkbox.className = 'switch-input'
     checkbox.checked = settings.features[id]
     checkbox.dataset.id = id
+    const track = document.createElement('span')
+    track.className = 'switch-track'
+    const thumb = document.createElement('span')
+    thumb.className = 'switch-thumb'
+    track.appendChild(thumb)
+    toggle.append(checkbox, track)
 
-    row.append(text, checkbox)
+    row.append(text, toggle)
     list.appendChild(row)
   })
 
