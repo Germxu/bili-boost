@@ -1,10 +1,10 @@
 import { logger } from '../../shared/logger'
 
 const FLAG_KEY = 'biliBoost_ipEnabled'
-const INJECT_MESSAGE = 'BILIBOOST_INJECT_IP_LOCATION'
+const INJECT_MESSAGE = 'BILIBOOST_INJECT_MAIN_WORLD'
 
 function requestMainWorldInjection(): void {
-  void chrome.runtime.sendMessage({ type: INJECT_MESSAGE }).catch((error: unknown) => {
+  void chrome.runtime.sendMessage({ type: INJECT_MESSAGE, file: 'ip-location.js' }).catch((error: unknown) => {
     logger.warn('main-world injection request failed', error)
   })
 }

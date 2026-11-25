@@ -2,7 +2,6 @@ import { BILIBILI_CHANNELS, HOME_HREF, MAX_NAV_CHANNELS } from '../../shared/con
 import { logger } from '../../shared/logger'
 import { getSettings, setNavCustomizerSettings } from '../../shared/storage'
 import type { ChannelItem, Feature, NavCustomizerSettings, Settings } from '../../shared/types'
-import { PLAYER_READY_EVENT } from './immersive-progress'
 
 const STYLE_ID = 'bili-boost-nav-editor-style'
 const PANEL_ID = 'bili-boost-channel-panel'
@@ -12,6 +11,17 @@ const DEL_CLASS = 'bb-nav-del'
 const ADD_CLASS = 'bb-nav-add'
 const EDITING_CLASS = 'bb-nav-editing'
 const LONG_PRESS_MS = 500
+// header 是异步 Vue 组件：mount 期间改 DOM 会让它读到失效引用而崩溃。
+// 正常路径由 MAIN world 的 vue-ready 脚本给出 mount 完成信号，签名稳定窗口可以短；
+// 信号失效时退化到长窗口兜底。
+const STABLE_WINDOW_MS = 300
+const FALLBACK_STABLE_WINDOW_MS = 1500
+// 10s 内没收到 Vue ready 信号就进入兜底模式，避免检测失效导致功能完全不可用
+const VUE_READY_TIMEOUT_MS = 10000
+const READY_ATTR = 'data-bb-header-vue-ready'
+const READY_EVENT = 'bili-boost:header-vue-ready'
+const INJECT_MESSAGE = 'BILIBOOST_INJECT_MAIN_WORLD'
+const VUE_READY_SCRIPT = 'vue-ready.js'
 
 const ITEM_SELECTOR = ':is(li, .left-entry__item)'
 // 原生导航项：注入的频道带 bb-nav-custom，要从原生集合里排除，避免重复挂删除号
@@ -32,9 +42,11 @@ let longPressPoint = { x: 0, y: 0 }
 let storageListener:
   | ((changes: { [ key: string ]: chrome.storage.StorageChange }, areaName: string) => void)
   | null = null
-let loadListener: (() => void) | null = null
-let playerReadyListener: (() => void) | null = null
-let fallbackTimer: number | undefined
+let vueReadyListener: (() => void) | null = null
+let vueReadyTimeout: number | undefined
+let fallbackMode = false
+// 统一持有导航上的事件监听器，关闭开关时真正移除，避免残留监听重新进入编辑态
+let navAbort: AbortController | null = null
 // 每个 host 缓存一份从原生项克隆的干净模板，避免硬编码 B站 的 Vue scope hash
 const itemTemplates = new WeakMap<HTMLElement, HTMLElement>()
 
@@ -396,9 +408,16 @@ function navSignature(): string {
   }).join('||')
 }
 
-/** 低频轮询替代 MutationObserver：不在 DOM 变动的瞬间介入，避免撞上 Vue patch */
+/** MAIN world 的 Vue ready 信号：mount 完成前绝不碰 header DOM */
+function headerVueReady(): boolean {
+  // 兜底模式（信号超时失效）才放行，正常路径必须有信号
+  return fallbackMode || document.documentElement.getAttribute(READY_ATTR) === '1'
+}
+
+/** 轮询检测导航重建；只有在 header Vue mount 完成、且签名稳定后才动手改 DOM */
 function poll(): void {
   if (!active || !domReady) return
+  if (!headerVueReady()) return
   const sig = navSignature()
   if (!sig) {
     lastNavSig = ''
@@ -409,16 +428,19 @@ function poll(): void {
     navStableSince = Date.now()
     return
   }
-  // 结构稳定一段时间后再渲染，给 B站 Vue mount 留出完成时间
-  if (Date.now() - navStableSince < 800) return
+  // 正常路径靠 mount 完成信号保证安全，窗口可短；兜底模式用长窗口
+  const stableMs = fallbackMode ? FALLBACK_STABLE_WINDOW_MS : STABLE_WINDOW_MS
+  if (Date.now() - navStableSince < stableMs) return
   renderAll()
 }
 
 function bindNav(nav: HTMLElement): void {
   if (nav.dataset.bbBound === '1') return
   nav.dataset.bbBound = '1'
+  const signal = navAbort?.signal
 
   nav.addEventListener('pointerdown', (e) => {
+    if (!active) return
     const target = e.target as HTMLElement
     if (target.closest(`.${DEL_CLASS}, .${ADD_CLASS}`)) return
     const item = target.closest<HTMLElement>(ITEM_SELECTOR)
@@ -427,26 +449,28 @@ function bindNav(nav: HTMLElement): void {
     window.clearTimeout(longPressTimer)
     longPressTimer = window.setTimeout(() => {
       longPressTimer = undefined
+      if (!active) return
       if (editing && isHome(item)) exitEditMode()
       else enterEditMode()
     }, LONG_PRESS_MS)
-  })
+  }, { signal })
 
   const cancelLongPress = (): void => {
     window.clearTimeout(longPressTimer)
     longPressTimer = undefined
   }
-  nav.addEventListener('pointerup', cancelLongPress)
-  nav.addEventListener('pointercancel', cancelLongPress)
-  nav.addEventListener('pointerleave', cancelLongPress)
+  nav.addEventListener('pointerup', cancelLongPress, { signal })
+  nav.addEventListener('pointercancel', cancelLongPress, { signal })
+  nav.addEventListener('pointerleave', cancelLongPress, { signal })
   nav.addEventListener('pointermove', (e) => {
     if (longPressTimer === undefined) return
     if (Math.abs(e.clientX - longPressPoint.x) > 8 || Math.abs(e.clientY - longPressPoint.y) > 8) {
       cancelLongPress()
     }
-  })
+  }, { signal })
 
   nav.addEventListener('click', (e) => {
+    if (!active) return
     const target = e.target as HTMLElement
     const del = target.closest<HTMLElement>(`.${DEL_CLASS}`)
     if (del) {
@@ -470,7 +494,7 @@ function bindNav(nav: HTMLElement): void {
         if (isHome(item)) exitEditMode()
       }
     }
-  })
+  }, { signal })
 }
 
 function removeItem(item: HTMLElement): void {
@@ -498,7 +522,7 @@ function onDocClickCapture(e: MouseEvent): void {
 }
 
 function enterEditMode(): void {
-  if (editing) return
+  if (!active || editing) return
   editing = true
   ensureStyle()
   document.addEventListener('click', onDocClickCapture, true)
@@ -604,21 +628,43 @@ function closePanel(): void {
   panel = null
 }
 
-/**
- * 等页面真正稳定后再介入 header：优先由沉浸式进度条注入完成事件触发
- * （说明视频已就绪、B站 header 的 Vue mount 早已结束）；
- * 非视频页没有进度条，则用 load 后的兜底延时。
- */
+/** 开始轮询 header：Vue mount 信号到达或兜底超时后调用 */
 function activateDom(): void {
   if (!active || domReady) return
   domReady = true
-  window.clearTimeout(fallbackTimer)
-  fallbackTimer = undefined
+  window.clearTimeout(vueReadyTimeout)
+  vueReadyTimeout = undefined
   ensureStyle()
+  navAbort = new AbortController()
   for (const nav of findNavs()) bindNav(nav)
-  // 低频轮询检测导航重建，不在 DOM 变动瞬间插手（避开 Vue patch）
-  pollTimer = window.setInterval(poll, 1000)
-  logger.info('nav-customizer: dom ready')
+  // 立即尝试渲染一次：此时 mount 已完成（或已进兜底），不需要等签名变化
+  lastNavSig = ''
+  navStableSince = Date.now() - STABLE_WINDOW_MS
+  pollTimer = window.setInterval(poll, 300)
+  poll()
+  logger.info(`nav-customizer: dom ready (${fallbackMode ? 'fallback' : 'vue signal'})`)
+}
+
+/** 请求 MAIN world 注入 vue-ready.js，并注册 mount 信号监听 */
+function requestVueReady(): void {
+  vueReadyListener = () => activateDom()
+  document.addEventListener(READY_EVENT, vueReadyListener)
+  // 信号可能早于监听器到达（脚本注入很快），先查一次属性
+  if (document.documentElement.getAttribute(READY_ATTR) === '1') {
+    activateDom()
+    return
+  }
+  void chrome.runtime.sendMessage({ type: INJECT_MESSAGE, file: VUE_READY_SCRIPT }).catch((error: unknown) => {
+    logger.warn('vue-ready injection request failed', error)
+  })
+  // 兜底：信号机制失效时不能让功能彻底不可用
+  vueReadyTimeout = window.setTimeout(() => {
+    vueReadyTimeout = undefined
+    if (domReady) return
+    fallbackMode = true
+    logger.warn('nav-customizer: vue-ready signal timeout, using fallback window')
+    activateDom()
+  }, VUE_READY_TIMEOUT_MS)
 }
 
 function cleanupDom(): void {
@@ -631,6 +677,7 @@ function cleanupDom(): void {
     host.querySelectorAll<HTMLElement>(`.${CUSTOM_CLASS}, .${DEL_CLASS}, .${ADD_CLASS}`)
       .forEach((el) => el.remove())
     host.querySelectorAll<HTMLElement>(ITEM_SELECTOR).forEach((item) => {
+      item.classList.remove(EDITING_CLASS)
       item.style.display = ''
     })
   }
@@ -651,19 +698,9 @@ export const navCustomizerFeature: Feature = {
       channels: settings.navCustomizer.channels.map((c) => ({ ...c })),
     }
 
-    // 进度条插入完成 = 视频已就绪、B站 header 早已 mount 完，此时再动导航最安全。
-    playerReadyListener = () => activateDom()
-    document.addEventListener(PLAYER_READY_EVENT, playerReadyListener)
-    // 非视频页（没有进度条）的兜底：load 后再等 5 秒，确保 header 挂载稳定
-    const scheduleFallback = (): void => {
-      loadListener = null
-      fallbackTimer = window.setTimeout(activateDom, 5000)
-    }
-    if (document.readyState === 'complete') scheduleFallback()
-    else {
-      loadListener = scheduleFallback
-      window.addEventListener('load', loadListener, { once: true })
-    }
+    // 等 MAIN world 的 Vue mount 完成信号再动手；不依赖视频播放事件
+    fallbackMode = false
+    requestVueReady()
 
     storageListener = (changes, areaName) => {
       if (!active || areaName !== 'sync' || !changes.settings) return
@@ -684,20 +721,20 @@ export const navCustomizerFeature: Feature = {
     editing = false
     domReady = false
     window.clearTimeout(longPressTimer)
+    longPressTimer = undefined
+    // 移除所有导航事件监听；下次开启时 activateDom 会重新绑定新的 controller
+    navAbort?.abort()
+    navAbort = null
     if (pollTimer !== undefined) {
       window.clearInterval(pollTimer)
       pollTimer = undefined
     }
     lastNavSig = ''
-    window.clearTimeout(fallbackTimer)
-    fallbackTimer = undefined
-    if (loadListener) {
-      window.removeEventListener('load', loadListener)
-      loadListener = null
-    }
-    if (playerReadyListener) {
-      document.removeEventListener(PLAYER_READY_EVENT, playerReadyListener)
-      playerReadyListener = null
+    window.clearTimeout(vueReadyTimeout)
+    vueReadyTimeout = undefined
+    if (vueReadyListener) {
+      document.removeEventListener(READY_EVENT, vueReadyListener)
+      vueReadyListener = null
     }
     document.removeEventListener('click', onDocClickCapture, true)
     if (storageListener) {

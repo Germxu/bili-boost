@@ -9,5 +9,5 @@
     "outDir": "../../public",
     "types": []
   },
-  "include": ["ip-location.ts"]
+  "include": ["ip-location.ts", "vue-ready.ts"]
 }
