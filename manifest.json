@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Bili Boost",
   "version": "0.1.0",
-  "description": "B站功能优化：评论区 IP属地、导航自定义、滚轮倍速、视频帧读取、沉浸式进度条",
+  "description": "沉浸式刷剧，一个让 B 站更好用的 Chrome 扩展。",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",

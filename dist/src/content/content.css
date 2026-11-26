@@ -1,0 +1,11 @@
+/* Bili Boost 注入到 B站 页面的基础样式 */
+:root {
+  --bili-boost-accent: #fb7299;
+}
+
+.bili-boost-ip-badge {
+  margin-left: 6px;
+  color: #9499a0;
+  font-size: 12px;
+  white-space: nowrap;
+}

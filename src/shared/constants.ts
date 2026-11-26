@@ -9,7 +9,7 @@ export const FEATURE_META: Record<FeatureId, { name: string; description: string
 
 /** B站 首页频道栏的全部频道，供添加面板选用 */
 export const BILIBILI_CHANNELS: ChannelItem[] = [
-  { name: '动态', href: '//t.bilibili.com' },
+  { name: '大会员', href: '//account.bilibili.com/big' },
   { name: '热门', href: '//www.bilibili.com/v/popular/all' },
   { name: '番剧', href: '//www.bilibili.com/anime/' },
   { name: '电影', href: '//www.bilibili.com/movie/' },
