@@ -1,1 +1,0 @@
-var e={navCustomizer:{name:`自定义导航`,description:`长按菜单进入编辑，可删除或添加菜单`}},t={features:{navCustomizer:!1},speedWheel:{remember:!0},navCustomizer:{hidden:[],channels:[]}},n=`[BiliBoost]`,r=`BILIBOOST_CAPTURE_FRAME`;export{n as i,t as n,e as r,r as t};
