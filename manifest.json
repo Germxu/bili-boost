@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bili Boost",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "沉浸式刷剧，一个让 B 站更好用的 Chrome 扩展。",
   "minimum_chrome_version": "120",
   "permissions": [
